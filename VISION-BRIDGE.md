@@ -90,7 +90,7 @@ DeepSeek 模型不支持图片输入，DSH 里粘贴/拖入图片会直接报「
 
 ## 四、插件改动（`dsh-vision`）
 
-本地路径 `C:\Users\33795\.dsh\plugins\dsh-vision`（clone 自 `william-jin-cmu/dsh-vision`，改动**未 push**）。
+fork 自 `william-jin-cmu/dsh-vision`，已 push 到 `scp3500/dsh-vision`（commit `3ce5328`），本地 `C:\Users\33795\.dsh\plugins\dsh-vision`。
 
 ### 4.1 `lib/vlm.js` + `src/vlm.ts`
 
@@ -169,11 +169,28 @@ VISION_API_KEY=sk-...
 
 ## 七、打包建议（待实施）
 
-内核改动无法纯插件化，所以「装即用」= 「改过的内核 + dsh-vision + 配置」。三个方向：
+内核改动无法纯插件化，所以「装即用」= 「改过的内核 + dsh-vision + 配置」。
 
-1. **一键脚本仓库**（推荐）：一个 GitHub 仓库含 dsh-vision + 3 个内核 patch + `install.ps1`（自动应用 patch + 装插件 + 写配置）。缺点：绑定 dsh 版本。
+### 仓库归属
+
+| 仓库 | 来源 | 内容 |
+|---|---|---|
+| `scp3500/deepseek-harness` | fork 自 `deepseek-ai/deepseek-harness` | 内核改动 + 本 `VISION-BRIDGE.md` |
+| `scp3500/dsh-vision` | fork 自 `william-jin-cmu/dsh-vision` | 插件（view_image 工具 + 引导） |
+
+### 三个打包方向
+
+1. **一键脚本仓库**（推荐）：脚本 clone `scp3500/dsh-vision` + 从 `scp3500/deepseek-harness` 提取 3 个内核 patch 应用 + 写配置。缺点：绑定 dsh 版本。
 2. **fork 发行版**：维护 `scp3500/deepseek-harness` 作为带视觉桥接的 dsh。最易用但长期维护成本高。
-3. **upstream 到官方**：提 PR 给 deepseek-ai，理想但慢、可能改设计。
+3. **upstream 到官方**：提 PR 给 `deepseek-ai`（内核）+ `william-jin-cmu`（插件里的通用适配 `max_completion_tokens` / `@deepseek-ai/schemastery`），理想但慢、可能改设计。
+
+### 内核 patch 清单（一键脚本要应用的文件）
+
+| 文件 | 改动 |
+|---|---|
+| `dsh-host-apiproxy/lib/index.js` | 图片拦截 + 落盘 + notice 引导 |
+| `dsh-llm-deepseek/lib/index.js` | 静默剥离 image block |
+| `dsh-llm-pi-ai/lib/index.js` | 静默剥离 image block |
 
 ---
 
