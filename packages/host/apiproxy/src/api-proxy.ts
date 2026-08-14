@@ -2501,7 +2501,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
                   savedPaths.push(target)
                 }
                 const notice: UserMessage = createUserMessage({
-                  content: [{ type: 'text', text: `用户发来的图片已保存到工作区，文件路径：\n${savedPaths.map(path => `- ${path}`).join('\n')}\n\n请用 view_image 工具依次查看这些图片，再回答用户的问题。` }],
+                  content: [{ type: 'text', text: `用户发来了图片，文件路径如下：\n${savedPaths.map(path => `- ${path}`).join('\n')}\n\n请立即调用 view_image 工具查看这些图片。不要输出任何解释、寒暄或过渡文字，你的第一步就必须是发起工具调用，不要先说话。` }],
                   source: {
                     kind: 'plugin',
                     plugin: 'dsh-vision',
