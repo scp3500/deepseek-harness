@@ -2496,16 +2496,15 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
               const current = selectionFor(agent).current
               const modelInfo = await ctx.llm.resolveModelInfo(current.provider, current.model)
               if (modelInfo.inputModalities !== undefined && !modelInfo.inputModalities.includes('image')) {
-                // Text-only model cannot carry image blocks. Instead of rejecting the
-                // prompt, spill each image to the session's workspace as an ordinary
-                // file and rewrite the message so the model can inspect them through
-                // the `view_image` vision-bridge tool (contributed by dsh-vision).
+                // Text-only model: keep the image as a durable attachment so the Web
+                // client renders a normal image bubble, and spill it to the workspace
+                // as a file. The path + view_image instruction ride a collapsed plugin
+                // notice (model-visible, collapsed in the UI) injected for the next
+                // pre-step; the DeepSeek adapter drops the image block silently.
+                const durable = await durablePromptContent(ctx, content)
                 const cwd = agent.session.header.cwd
                 const spillDir = join(cwd, '.charts')
                 await mkdir(spillDir, { recursive: true })
-                const textParts = content
-                  .filter((part): part is Extract<PromptContentPart, { type: 'text' }> => part.type === 'text')
-                  .map(part => part.text)
                 const savedPaths: string[] = []
                 for (const part of content) {
                   if (part.type !== 'image') continue
@@ -2515,21 +2514,23 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
                   await writeFile(target, bytes)
                   savedPaths.push(target)
                 }
-                const summary = savedPaths.map(path => `- ${path}`).join('\n')
-                const question = textParts.filter(text => text.trim() !== '').join('\n')
                 const guide = [
-                  `用户发来了 ${savedPaths.length} 张图片，已保存到工作区的以下文件：`,
-                  summary,
+                  '用户发来的图片已保存到工作区，文件路径：',
+                  savedPaths.map(path => `- ${path}`).join('\n'),
                   '',
-                  '当前模型不支持直接看图，请用 view_image 工具依次查看这些图片，再回答用户的问题。',
-                  ...(question === ''
-                    ? ['用户没有附加文字说明，请先查看图片并描述其内容。']
-                    : ['', '用户的话：', question]),
+                  '请用 view_image 工具依次查看这些图片，再回答用户的问题。',
                 ].join('\n')
-                const message: UserMessage = createUserMessage({
+                const notice: UserMessage = createUserMessage({
                   content: [{ type: 'text', text: guide }],
-                  source,
+                  source: {
+                    kind: 'plugin',
+                    plugin: 'dsh-vision',
+                    form: 'notice',
+                    summary: `已接收 ${savedPaths.length} 张图片，将用视觉工具查看`,
+                  },
                 })
+                const message: UserMessage = createUserMessage({ content: durable, source })
+                agent.inject(notice)
                 if (mode === 'steer') agent.steer(message)
                 else agent.followup(message)
                 return ok(request, { accepted: true as const })
