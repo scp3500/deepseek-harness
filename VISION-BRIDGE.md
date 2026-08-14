@@ -192,6 +192,28 @@ VISION_API_KEY=sk-...
 | `dsh-llm-deepseek/lib/index.js` | 静默剥离 image block |
 | `dsh-llm-pi-ai/lib/index.js` | 静默剥离 image block |
 
+### 更新手册
+
+**DSH 升级后恢复内核改动**（`npm update -g @deepseek-ai/dsh` 会覆盖 lib）：
+
+```powershell
+node vision-patch/apply.mjs
+# 或显式指定 dsh 根目录：
+node vision-patch/apply.mjs "C:/Users/<你>/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh"
+```
+
+脚本对 3 个内核 lib 做「锚点替换」。若某处锚点在新版本失效（上游重构了那段代码），脚本会明确报错并列出失效位置，需手动处理后同步更新 `apply.mjs` 里的 old/new。
+
+**dsh-vision 上游更新**：
+
+```powershell
+cd ~/.dsh/plugins/dsh-vision
+git fetch upstream
+git rebase upstream/main   # 解决冲突
+```
+
+**配置更新**（换视觉模型 / key）：只改 `~/.dsh/.env` 和 `cordis.patch.yml`，不碰代码，重启生效。
+
 ---
 
 ## 八、变更历史（deepseek-harness fork）
