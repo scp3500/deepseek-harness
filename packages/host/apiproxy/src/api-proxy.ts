@@ -4,14 +4,14 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { mkdir, stat } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { mkdir, stat, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import type { Agent, ModelSelection, ModelSelectionRef, AgentOptions, AgentStatus } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-presets/types'
 import { AttachmentError } from '@deepseek-ai/dsh-attachment'
-import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
+import type { ImageAttachmentRef, ImageMediaType } from '@deepseek-ai/dsh-attachment'
 import { contentHasImage, createUserMessage, freezeMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { errorChain } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, MessageSource } from '@deepseek-ai/dsh-llm'
@@ -145,6 +145,16 @@ function decodeBase64(data: string): Uint8Array {
     throw new AttachmentError('Image upload is not canonical base64.', 'INVALID_IMAGE_BASE64')
   }
   return new Uint8Array(decoded)
+}
+
+/** File extension for a durable image media type, used when spilling an image to the workspace. */
+function imageMediaTypeExt(mediaType: ImageMediaType): string {
+  switch (mediaType) {
+    case 'image/png': return '.png'
+    case 'image/jpeg': return '.jpg'
+    case 'image/webp': return '.webp'
+    case 'image/gif': return '.gif'
+  }
 }
 
 /** Validate one prompt as a batch before publishing any durable image object. */
@@ -2486,11 +2496,43 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
               const current = selectionFor(agent).current
               const modelInfo = await ctx.llm.resolveModelInfo(current.provider, current.model)
               if (modelInfo.inputModalities !== undefined && !modelInfo.inputModalities.includes('image')) {
-                return err(request, {
-                  code: 'attachment-error',
-                  message: `Model "${current.model}" does not support image input.`,
-                  details: { reason: 'MODEL_DOES_NOT_SUPPORT_IMAGES' },
+                // Text-only model cannot carry image blocks. Instead of rejecting the
+                // prompt, spill each image to the session's workspace as an ordinary
+                // file and rewrite the message so the model can inspect them through
+                // the `view_image` vision-bridge tool (contributed by dsh-vision).
+                const cwd = agent.session.header.cwd
+                const spillDir = join(cwd, '.charts')
+                await mkdir(spillDir, { recursive: true })
+                const textParts = content
+                  .filter((part): part is Extract<PromptContentPart, { type: 'text' }> => part.type === 'text')
+                  .map(part => part.text)
+                const savedPaths: string[] = []
+                for (const part of content) {
+                  if (part.type !== 'image') continue
+                  const bytes = decodeBase64(part.data)
+                  const filename = `${Date.now()}-${randomUUID().slice(0, 8)}${imageMediaTypeExt(part.mediaType)}`
+                  const target = join(spillDir, filename)
+                  await writeFile(target, bytes)
+                  savedPaths.push(target)
+                }
+                const summary = savedPaths.map(path => `- ${path}`).join('\n')
+                const question = textParts.filter(text => text.trim() !== '').join('\n')
+                const guide = [
+                  `用户发来了 ${savedPaths.length} 张图片，已保存到工作区的以下文件：`,
+                  summary,
+                  '',
+                  '当前模型不支持直接看图，请用 view_image 工具依次查看这些图片，再回答用户的问题。',
+                  ...(question === ''
+                    ? ['用户没有附加文字说明，请先查看图片并描述其内容。']
+                    : ['', '用户的话：', question]),
+                ].join('\n')
+                const message: UserMessage = createUserMessage({
+                  content: [{ type: 'text', text: guide }],
+                  source,
                 })
+                if (mode === 'steer') agent.steer(message)
+                else agent.followup(message)
+                return ok(request, { accepted: true as const })
               }
             }
             const durable = await durablePromptContent(ctx, content)
