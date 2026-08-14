@@ -50,7 +50,7 @@ import type {
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import { idleWatchdog, timeoutOf } from '@deepseek-ai/dsh-timeout'
 import type { ResolvedPiAiProviderProfile } from './config.ts'
-import { toPiContext } from './context.ts'
+import { stripImageBlocks, toPiContext } from './context.ts'
 import { toStreamChunks } from './stream.ts'
 
 /** One resolution's frozen view: the profiles and the collection built from them. */
@@ -300,16 +300,22 @@ export class PiAiAdapter extends LlmAdapter {
 
     try {
       const containsImage = options.messages.some(message => contentHasImage(message.content))
-      if (containsImage && !model.input.includes('image')) {
-        throw new LlmError(`pi-ai model "${model.id}" does not support image input`, 'UNSUPPORTED_CONTENT')
-      }
-      const attachments = containsImage ? this.config.resolveAttachments?.() : undefined
-      if (containsImage && attachments === undefined) {
+      const vision = model.input.includes('image')
+      // Text-only model: strip image blocks so the request proceeds as pure text
+      // instead of throwing. The image stays in the session log (Web client
+      // preview) but never reaches the wire; the model inspects it through the
+      // `view_image` vision-bridge tool instead.
+      const effective = containsImage && !vision
+        ? { ...options, messages: options.messages.map(message => ({ ...message, content: stripImageBlocks(message.content) })) }
+        : options
+      const effectiveImage = effective !== options ? false : containsImage
+      const attachments = effectiveImage ? this.config.resolveAttachments?.() : undefined
+      if (effectiveImage && attachments === undefined) {
         throw new LlmError('pi-ai image input requires the durable attachment service', 'UNSUPPORTED_CONTENT')
       }
       const context = attachments === undefined
-        ? toPiContext(options)
-        : await toPiContext(options, attachments)
+        ? toPiContext(effective)
+        : await toPiContext(effective, attachments)
       const events = snapshot.models.streamSimple(model, context, {
         ...profileOptions(profile, reasoning, apiKey),
         ...options.temperature === undefined ? {} : { temperature: options.temperature },

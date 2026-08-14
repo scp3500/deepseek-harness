@@ -18,6 +18,15 @@ function flattenText(message: Message): string {
     .join('')
 }
 
+/** Strip image blocks (recursively inside tool results) for a text-only model. */
+export function stripImageBlocks(blocks: readonly ContentBlock[]): ContentBlock[] {
+  return blocks
+    .filter(block => block.type !== 'image')
+    .map(block => block.type === 'tool-result'
+      ? { ...block, content: stripImageBlocks(block.content) }
+      : block)
+}
+
 
 /** Flatten text recursively inside one tool result. */
 function toolResultText(blocks: readonly ContentBlock[]): string {
