@@ -2500,19 +2500,34 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
                   await writeFile(target, bytes)
                   savedPaths.push(target)
                 }
-                const guide = [
-                  '用户发来的图片已保存到工作区，文件路径：',
-                  savedPaths.map(path => `- ${path}`).join('\n'),
-                  '',
-                  '请用 view_image 工具依次查看这些图片，再回答用户的问题。',
-                ].join('\n')
+                const userQuestion = content
+                  .filter((part): part is Extract<PromptContentPart, { type: 'text' }> => part.type === 'text')
+                  .map(part => part.text)
+                  .filter(text => text.trim() !== '')
+                  .join('\n')
+                const vision = ctx.get('vision') as { describe: (sources: string[], question: string | undefined, signal: AbortSignal | undefined) => Promise<string[]> } | undefined
+                let description: string | null = null
+                if (vision !== undefined) {
+                  try {
+                    const results = await vision.describe(savedPaths, userQuestion === '' ? undefined : userQuestion, undefined)
+                    if (Array.isArray(results) && results.length > 0) {
+                      description = results.map((text, index) => `【图片 ${index + 1}】\n${text}`).join('\n\n')
+                    }
+                  } catch (_visionError) {
+                    description = null
+                  }
+                }
                 const notice: UserMessage = createUserMessage({
-                  content: [{ type: 'text', text: guide }],
+                  content: [{ type: 'text', text: description !== null
+                    ? `以下是对用户图片的视觉识别结果，请直接基于这些内容回答用户的问题（无需再调用 view_image）：\n\n${description}`
+                    : `用户发来的图片已保存到工作区，文件路径：\n${savedPaths.map(path => `- ${path}`).join('\n')}\n\n请用 view_image 工具依次查看这些图片，再回答用户的问题。` }],
                   source: {
                     kind: 'plugin',
                     plugin: 'dsh-vision',
                     form: 'notice',
-                    summary: `已接收 ${savedPaths.length} 张图片，将用视觉工具查看`,
+                    summary: description !== null
+                      ? `已识别 ${savedPaths.length} 张图片`
+                      : `已接收 ${savedPaths.length} 张图片，将用视觉工具查看`,
                   },
                 })
                 const message: UserMessage = createUserMessage({ content: durable, source })
